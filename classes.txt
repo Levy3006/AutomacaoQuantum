@@ -1,0 +1,26 @@
+classes = [
+    
+    {
+        'Renda Variável': [
+            'Ações Dividendos',
+            'Ações fechado',
+            'Ações FMP - FGTS',
+            'Ações Ibovespa ativo',
+            'Ações Ibovespa ativo com alavancagem',
+            'Ações Ibovespa indexado',
+            'Ações IBrX Ativo',
+            'Ações IBrX Indexado',
+            'Ações IBX ativo',
+            'Ações Indexados',
+            'Ações Índice Ativo',
+            'Ações Livre',
+            'Ações outros',
+            'Ações Setoriais',
+            'Ações Setoriais Livre',
+            'Ações Setoriais Privatização Petrobrás - Recursos Próprios',
+            'Ações Small Caps',
+            'Ações Sustentabilidade/Governança',
+            'Ações Valor/Crescimento',
+        ]
+    }
+    ]

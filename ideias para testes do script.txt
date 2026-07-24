@@ -1,0 +1,102 @@
+É um começo legítimo, mas tem limitações importantes que reduzem o valor diagnóstico do que você construiu.
+O que está correto no raciocínio: stress testing repetitivo é sim uma forma válida de medir robustez empírica, especialmente pra scripts que dependem de portais externos (Selenium, APIs) onde o ambiente varia.
+O problema central: "quebrou" é binário demais.
+Sua métrica só captura falhas explícitas — exceções não tratadas que interrompem o script. Ela não captura:
+
+Falhas silenciosas: o script completa sem erro, mas o output está errado (arquivo corrompido, dado incompleto, coluna zerada). Isso é frequentemente pior que um crash porque você não percebe.
+Falhas parciais: o script completou 7 das 10 etapas e travou na 8ª — isso aparece como "quebrou", mas você não sabe onde.
+Degradação sem quebra: o script rodou, mas levou 4x mais tempo que o normal. Sua taxa de quebrabilidade diz 0%, mas algo está errado.
+
+Outros gaps:
+Você não está categorizando os erros. Saber que quebrou 3/10 vezes não diz qual exceção, em qual etapa, sob qual condição. Sem isso, o número não te ajuda a corrigir nada.
+As N execuções provavelmente rodam nas mesmas condições — mesmo horário, mesma sessão, mesmo estado de ambiente. Em produção, o script vai falhar por razões que essa repetição uniforme não cobre (portal fora do ar, timeout de rede, dado de entrada diferente).
+Tempo total não detecta degradação progressiva. Se cada execução demora um pouco mais que a anterior (memory leak, sessão Selenium acumulando estado), você só vê o total — não a tendência.
+O que complementaria bem:
+Capturar e logar a exceção + stack trace + etapa onde quebrou, em vez de só contabilizar. Medir tempo por execução individual, não só o total. Validar o output de cada execução contra algum critério mínimo (arquivo existe? tem N linhas? coluna X não está vazia?). Isso transforma seu script de um contador de crashes em um diagnóstico real.
+Resumindo: o que você fez mede "o script não morre explicitamente", mas confiança de verdade exige também "o script produz o que deveria". São coisas diferentes.Você disse: e quais as melhores formas de testar e monitorar o script?e quais as melhores formas de testar e monitorar o script?01:57Claude respondeu: Vou separar em duas dimensões distintas — teste (antes/durante desenvolvimento) e monitoramento (em produção) — porque as ferramentas e objetivos são diferente…Estruturou estratégias de testes e monitoramento para pipeline automatizadoEstruturou estratégias de testes e monitoramento para pipeline automatizadoVou separar em duas dimensões distintas — teste (antes/durante desenvolvimento) e monitoramento (em produção) — porque as ferramentas e objetivos são diferentes.
+
+Teste
+1. Logging estruturado por etapa
+É o upgrade mais impactante pro seu caso antes de qualquer outra coisa. Em vez de só saber que quebrou, você sabe exatamente onde.
+pythonimport logging
+import time
+
+logging.basicConfig(
+    filename="execucao.log",
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+def etapa(nome, func, *args, **kwargs):
+    logging.info(f"INICIO | {nome}")
+    t0 = time.time()
+    try:
+        resultado = func(*args, **kwargs)
+        logging.info(f"OK | {nome} | {time.time() - t0:.2f}s")
+        return resultado
+    except Exception as e:
+        logging.error(f"FALHA | {nome} | {type(e).__name__}: {e}")
+        raise
+Você envolve cada etapa do seu main.py com isso. O log vira seu diagnóstico real: qual etapa, qual exceção, quanto tempo cada uma levou.
+
+2. Validação de output (assertion de contrato)
+Depois que o script "completa", você verifica se o resultado é válido. Isso captura as falhas silenciosas.
+pythondef validar_output(df, nome_arquivo):
+    assert os.path.exists(nome_arquivo), "Arquivo não foi gerado"
+    assert len(df) > 0, "DataFrame vazio"
+    assert df["valor"].notna().all(), "Coluna valor contém nulos"
+    assert df["data"].max() >= pd.Timestamp.today().date(), "Data desatualizada"
+Você define o que "correto" significa pro seu script específico — contagem mínima de linhas, colunas obrigatórias preenchidas, datas esperadas. Se falhar aqui, o script reporta falha mesmo sem ter lançado exceção.
+
+3. Testes unitários com pytest (seletivo)
+Não precisa cobrir tudo — foca nas funções com lógica própria que não dependem do portal.
+python# test_utils.py
+def test_calcular_dia_util_d2():
+    # sua lógica de D-2 com workalendar
+    resultado = calcular_dia_util_anterior(2)
+    assert resultado.weekday() < 5  # não pode ser fim de semana
+    assert resultado < date.today()
+Funções que calculam datas, transformam dados, constroem nomes de arquivo — essas você testa isoladamente. Selenium e API você não testa unitariamente; você mocka ou testa por integração.
+
+4. Mock para dependências externas
+Pra testar a lógica sem precisar abrir o portal ou bater na API:
+pythonfrom unittest.mock import patch, MagicMock
+
+@patch("seu_modulo.requests.get")
+def test_parse_resposta_btg(mock_get):
+    mock_get.return_value.json.return_value = {"dados": [...]}  # resposta simulada
+    resultado = sua_funcao_de_parse()
+    assert resultado["campo_x"] == valor_esperado
+Isso isola o que é lógica sua do que é comportamento externo.
+
+Monitoramento
+5. Métricas por execução (tempo por etapa)
+Seu script de teste atual mede tempo total. O que importa é o tempo individual por etapa ao longo das execuções:
+pythonhistorico = []  # ou salva em CSV/JSON
+
+historico.append({
+    "timestamp": datetime.now().isoformat(),
+    "etapa": "download_relatorio_btg",
+    "duracao_s": 12.4,
+    "status": "ok"
+})
+Com isso acumulado, você detecta degradação: se download_relatorio_btg estava levando 5s e agora leva 25s consistentemente, algo mudou no portal — antes de quebrar.
+
+6. Alerta por e-mail/arquivo de flag
+Pra scripts que rodam sem supervisão:
+pythondef alertar_falha(etapa, erro):
+    with open("FALHA.flag", "w") as f:
+        f.write(f"{datetime.now()} | {etapa} | {erro}")
+    # ou envia e-mail com smtplib se tiver SMTP configurado
+A existência do arquivo FALHA.flag pode ser checada por outro processo, ou você simplesmente olha antes de usar o output.
+
+Hierarquia de prioridade pra você
+Dado que é Selenium + API em ambiente financeiro com dependências externas, a ordem de implementação que faz mais sentido:
+
+Logging por etapa — te dá diagnóstico imediato, baixo custo
+Validação de output — fecha o gap das falhas silenciosas
+Métricas de tempo por etapa — detecta degradação antes da quebra
+pytest nas funções de lógica pura — D-2, parsing, transformações
+Mock + alerta — quando o pipeline estiver mais maduro
+
+O seu script de teste atual vira mais útil se você adicionar o log estruturado nele — em vez de só contar crashes, ele passa a agregar onde cada execução falhou.
